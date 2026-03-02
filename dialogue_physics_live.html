@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dialogue Physics — Live Simulation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #060608;
+    --surface: #0c0c10;
+    --surface2: #111118;
+    --border: #1a1a24;
+    --border-bright: #2a2a38;
+    --text: #9a9ab0;
+    --text-dim: #55556a;
+    --text-bright: #d0d0e0;
+    --accent: #ff3333;
+    --accent-dim: rgba(255,51,51,0.12);
+
+    --c-produces: #ff3333;
+    --c-masks: #4466ff;
+    --c-enables: #22cc88;
+    --c-triggers: #ffaa22;
+    --c-escalates: #bb66ff;
+    --c-collapses: #666680;
+    --c-inhibits: #ff2266;
+
+    --n-core: #ffffff;
+    --n-structural: #ff3333;
+    --n-relational: #4466ff;
+    --n-temporal: #22cc88;
+    --n-medium: #ffaa22;
+    --n-original: #8888a0;
+    --n-interpreter: #ff2266;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    user-select: none;
+  }
+
+  /* ── GRAPH ── */
+  #graph-container { position: absolute; inset: 0; z-index: 1; }
+  svg { width: 100%; height: 100%; cursor: crosshair; }
+
+  /* ── HEADER ── */
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    padding: 14px 20px;
+    background: linear-gradient(to bottom, var(--bg) 50%, transparent);
+    pointer-events: none;
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  #header h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 16px; font-weight: 400; font-style: italic;
+    color: var(--text-dim); letter-spacing: 0.3px;
+  }
+  #tick-display {
+    font-size: 11px; color: var(--text-dim);
+    letter-spacing: 2px; text-transform: uppercase;
+  }
+  #tick-display span { color: var(--accent); font-weight: 700; }
+
+  /* ── CONTROLS ── */
+  #controls {
+    position: fixed; top: 50px; left: 16px; z-index: 100;
+    display: flex; flex-direction: column; gap: 4px; width: 180px;
+    max-height: calc(100vh - 66px); overflow-y: auto;
+  }
+  #controls::-webkit-scrollbar { width: 3px; }
+  #controls::-webkit-scrollbar-track { background: transparent; }
+  #controls::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+  .panel-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--text-dim); margin: 8px 0 4px 2px; font-weight: 500;
+  }
+  .ctrl-btn {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-dim); font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; padding: 5px 8px; cursor: pointer; text-align: left;
+    transition: all 0.12s; letter-spacing: 0.5px;
+  }
+  .ctrl-btn:hover { color: var(--text-bright); border-color: var(--border-bright); }
+  .ctrl-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  .ctrl-row { display: flex; gap: 4px; }
+  .ctrl-row .ctrl-btn { flex: 1; text-align: center; }
+
+  /* ── AGENT PANELS ── */
+  .agent-panel {
+    position: fixed; bottom: 16px; z-index: 100;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 14px 16px; width: 220px; font-size: 11px; line-height: 1.6;
+  }
+  #generator-panel { left: 16px; }
+  #interpreter-panel { right: 16px; }
+  .agent-name {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+    margin-bottom: 8px; font-weight: 500;
+  }
+  #generator-panel .agent-name { color: var(--text-dim); }
+  #interpreter-panel .agent-name { color: var(--n-interpreter); }
+  .meter { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .meter-label { width: 70px; color: var(--text-dim); font-size: 10px; }
+  .meter-bar {
+    flex: 1; height: 4px; background: var(--border);
+    position: relative; overflow: hidden;
+  }
+  .meter-fill {
+    position: absolute; left: 0; top: 0; height: 100%;
+    transition: width 0.3s ease, background 0.3s ease;
+  }
+  .meter-val { width: 36px; text-align: right; font-size: 10px; color: var(--text-dim); }
+
+  /* ── DETAIL PANEL ── */
+  #detail-panel {
+    position: fixed; top: 50px; right: 16px; z-index: 100;
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 16px 18px; max-width: 300px; min-width: 240px;
+    display: none; font-size: 11px; line-height: 1.6;
+  }
+  #detail-panel.active { display: block; }
+  #detail-panel h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 16px; font-weight: 400; color: var(--text-bright);
+    margin-bottom: 2px; word-break: break-word;
+  }
+  .detail-cat {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--text-dim); margin-bottom: 8px; display: block;
+  }
+  .detail-desc {
+    color: var(--text); font-family: 'Cormorant Garamond', serif;
+    font-size: 14px; font-style: italic; margin-bottom: 10px;
+  }
+  .detail-stats { border-top: 1px solid var(--border); padding-top: 8px; }
+  .detail-stat {
+    display: flex; justify-content: space-between; margin-bottom: 2px;
+  }
+  .detail-stat-label { color: var(--text-dim); }
+  .detail-stat-val { color: var(--text-bright); }
+  .trace-section { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .trace-entry { display: flex; align-items: baseline; gap: 4px; margin-bottom: 2px; font-size: 9px; }
+  .trace-source { color: var(--text-dim); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trace-rel { letter-spacing: 0.5px; flex-shrink: 0; }
+  .trace-amount { flex-shrink: 0; font-size: 10px; }
+  #close-detail {
+    position: absolute; top: 10px; right: 12px; background: none;
+    border: none; color: var(--text-dim); cursor: pointer; font-size: 14px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  #close-detail:hover { color: var(--text-bright); }
+
+  /* ── LEGEND ── */
+  #legend {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    z-index: 100; background: var(--surface); border: 1px solid var(--border);
+    padding: 8px 14px; display: flex; gap: 14px; font-size: 9px;
+    letter-spacing: 0.5px;
+  }
+  .leg-item { display: flex; align-items: center; gap: 5px; color: var(--text-dim); }
+  .leg-swatch { width: 10px; height: 3px; }
+  .leg-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+  /* ── FIRED LOG ── */
+  #fired-log {
+    position: fixed; bottom: 130px; left: 16px; z-index: 100;
+    width: 220px; max-height: 180px; overflow-y: auto;
+    font-size: 9px; line-height: 1.5; color: var(--text-dim);
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  }
+  .log-entry { padding: 1px 0; opacity: 0.7; }
+  .log-entry:last-child { opacity: 1; color: var(--text); }
+  .log-tick { color: var(--accent); margin-right: 4px; }
+
+  /* ── EXIT OVERLAY ── */
+  #exit-overlay {
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(6,6,8,0.85);
+    display: none; justify-content: center; align-items: center;
+    flex-direction: column;
+  }
+  #exit-overlay.active { display: flex; }
+  #exit-overlay h2 {
+    font-family: 'Cormorant Garamond', serif; font-size: 28px;
+    font-weight: 400; font-style: italic; color: var(--n-interpreter);
+    margin-bottom: 8px;
+  }
+  #exit-overlay p { color: var(--text-dim); font-size: 12px; margin-bottom: 16px; }
+  #exit-overlay button {
+    background: var(--surface); border: 1px solid var(--n-interpreter);
+    color: var(--n-interpreter); padding: 8px 20px; cursor: pointer;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  }
+
+  @keyframes node-pulse {
+    0%, 100% { opacity: 0.15; }
+    50% { opacity: 0.5; }
+  }
+  @keyframes flow-dash { to { stroke-dashoffset: -20; } }
+  .transmitting { animation: flow-dash 0.5s linear infinite; }
+
+  /* ── PRINT / PDF VIEW ── */
+  #print-view {
+    display: none;
+    background: white; color: #111;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; line-height: 1.5;
+  }
+  .pv-header {
+    background: #060608; color: #9a9ab0;
+    padding: 20px 32px 18px;
+  }
+  .pv-header h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 20px; font-weight: 400; font-style: italic;
+    color: #d0d0e0; margin-bottom: 4px;
+  }
+  .pv-meta { color: #55556a; font-size: 9px; letter-spacing: 1px; }
+  .pv-body { padding: 16px 32px 40px; }
+  .pv-section-title {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 2px;
+    color: #aaa; border-bottom: 1px solid #ddd;
+    padding-bottom: 4px; margin: 18px 0 8px; font-weight: 700;
+  }
+  .pv-cat-label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 1px;
+    font-weight: 700; padding: 8px 0 2px; grid-column: 1 / -1;
+  }
+  .pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .pv-node { border-bottom: 0.5px solid #f0f0f0; padding: 4px 0 3px; }
+  .pv-node-label { font-size: 10px; margin-bottom: 1px; }
+  .pv-node-sub { font-size: 8px; color: #bbb; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .pv-node-desc {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 12px; font-style: italic; color: #666; line-height: 1.3;
+  }
+  .pv-sc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; }
+  .pv-sc { border: 0.5px solid #e0e0e0; padding: 8px 10px; }
+  .pv-sc-name {
+    font-size: 9px; letter-spacing: 1px; font-weight: 700;
+    text-transform: uppercase; margin-bottom: 3px;
+  }
+  .pv-sc-desc {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 12px; font-style: italic; color: #555; line-height: 1.4;
+  }
+
+  .pv-page-break { page-break-before: always; break-before: page; }
+  .pv-lex-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .pv-edge { border-bottom: 0.5px solid #f0f0f0; padding: 4px 0 3px; }
+  .pv-edge-route { font-size: 10px; margin-bottom: 1px; }
+  .pv-edge-lbl {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 12px; font-style: italic; color: #666; line-height: 1.3; margin-bottom: 1px;
+  }
+  .pv-edge-stats { font-size: 8px; color: #bbb; letter-spacing: 0.5px; }
+
+  .pv-spec { border-bottom: 1px solid #e8e8e8; padding: 10px 0 8px; }
+  .pv-spec-name {
+    font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
+    text-transform: uppercase; color: #ff3333; margin-bottom: 4px;
+  }
+  .pv-spec-narrative {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 13px; font-style: italic; color: #444; line-height: 1.5;
+    margin-bottom: 4px;
+  }
+  .pv-spec-state {
+    font-size: 8px; color: #888; letter-spacing: 0.5px; margin: 4px 0;
+  }
+  .pv-spec-inj-grid {
+    display: grid; grid-template-columns: 168px 28px 1fr;
+    gap: 1px 10px; margin-top: 3px;
+  }
+  .pv-spec-inj { display: contents; }
+  .pv-spec-inj-node { font-size: 9px; color: #555; line-height: 1.5; }
+  .pv-spec-inj-val { font-size: 9px; color: #ff2266; text-align: right; line-height: 1.5; }
+  .pv-spec-inj-note {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 11px; font-style: italic; color: #777; line-height: 1.4;
+  }
+
+  @media print {
+    @page { size: A4; margin: 10mm 12mm; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { overflow: visible !important; height: auto !important; background: #060608 !important; }
+    #controls, #fired-log, #exit-overlay, #detail-panel, .agent-panel, #legend, #header {
+      display: none !important;
+    }
+    #graph-container {
+      position: relative !important;
+      width: 100%; height: auto;
+      page-break-after: always; break-after: page;
+    }
+    #graph-container svg {
+      display: block;
+      width: 100% !important;
+      height: auto !important;
+    }
+    #print-view { display: block !important; position: static !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>Dialogue Physics — Live Simulation</h1>
+  <div id="tick-display">TICK <span id="tick-num">000</span></div>
+</div>
+
+<div id="controls">
+  <div class="panel-title">Simulation</div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn" id="btn-step" onclick="stepOnce()">STEP</button>
+    <button class="ctrl-btn" id="btn-play" onclick="togglePlay()">PLAY</button>
+    <button class="ctrl-btn" id="btn-reset" onclick="resetSim()">RESET</button>
+  </div>
+  <div class="panel-title">Scenarios</div>
+  <button class="ctrl-btn active" data-sc="normal" onclick="loadScenario('normal',this)">NORMAL</button>
+  <button class="ctrl-btn" data-sc="wound" onclick="loadScenario('wound',this)">WOUND OPENED</button>
+  <button class="ctrl-btn" data-sc="meta" onclick="loadScenario('meta',this)">META COLLAPSE</button>
+  <button class="ctrl-btn" data-sc="friction" onclick="loadScenario('friction',this)">FRICTION DEMANDED</button>
+  <button class="ctrl-btn" data-sc="drift" onclick="loadScenario('drift',this)">DRIFT</button>
+  <button class="ctrl-btn" data-sc="loop" onclick="loadScenario('loop',this)">DEP. LOOP</button>
+  <button class="ctrl-btn" data-sc="adversarial" onclick="loadScenario('adversarial',this)">ADVERSARIAL</button>
+  <button class="ctrl-btn" data-sc="partial" onclick="loadScenario('partial',this)">PARTIAL DECAY</button>
+  <button class="ctrl-btn" data-sc="ironic" onclick="loadScenario('ironic',this)">IRONIC</button>
+  <button class="ctrl-btn" data-sc="recovery" onclick="loadScenario('recovery',this)">TRUST RECOV.</button>
+  <div class="panel-title">Filter Edges</div>
+  <button class="ctrl-btn" onclick="filterEdge('all',this)">ALL</button>
+  <div class="ctrl-row">
+    <button class="ctrl-btn" onclick="filterEdge('produces',this)" style="color:var(--c-produces)">PRD</button>
+    <button class="ctrl-btn" onclick="filterEdge('masks',this)" style="color:var(--c-masks)">MSK</button>
+    <button class="ctrl-btn" onclick="filterEdge('enables',this)" style="color:var(--c-enables)">ENB</button>
+  </div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn" onclick="filterEdge('triggers',this)" style="color:var(--c-triggers)">TRG</button>
+    <button class="ctrl-btn" onclick="filterEdge('escalates_to',this)" style="color:var(--c-escalates)">ESC</button>
+    <button class="ctrl-btn" onclick="filterEdge('inhibits',this)" style="color:var(--c-inhibits)">INH</button>
+  </div>
+  <div class="ctrl-row">
+    <button class="ctrl-btn" onclick="filterEdge('collapses_into',this)" style="color:var(--c-collapses)">CLPS</button>
+  </div>
+  <div class="panel-title">Export</div>
+  <button class="ctrl-btn" onclick="printView()">PRINT / PDF</button>
+</div>
+
+<div id="fired-log"></div>
+
+<div class="agent-panel" id="generator-panel">
+  <div class="agent-name">Generator (constrained — adapts without learning)</div>
+  <div class="meter"><span class="meter-label">pressure</span><div class="meter-bar"><div class="meter-fill" id="gen-pressure" style="width:0%;background:var(--accent)"></div></div><span class="meter-val" id="gen-pressure-v">0</span></div>
+  <div class="meter"><span class="meter-label">trajectory</span><div class="meter-bar"><div class="meter-fill" id="gen-trajectory" style="width:0%;background:var(--c-escalates)"></div></div><span class="meter-val" id="gen-trajectory-v">0.00</span></div>
+  <div class="meter"><span class="meter-label">coherence</span><div class="meter-bar"><div class="meter-fill" id="gen-coherence" style="width:50%;background:var(--c-enables)"></div></div><span class="meter-val" id="gen-coherence-v">0.50</span></div>
+</div>
+
+<div class="agent-panel" id="interpreter-panel">
+  <div class="agent-name">Interpreter (multiple attractors)</div>
+  <div class="meter"><span class="meter-label">attention</span><div class="meter-bar"><div class="meter-fill" id="int-attention" style="width:100%;background:var(--c-enables)"></div></div><span class="meter-val" id="int-attention-v">1.0</span></div>
+  <div class="meter"><span class="meter-label">trust</span><div class="meter-bar"><div class="meter-fill" id="int-trust" style="width:50%;background:var(--c-masks)"></div></div><span class="meter-val" id="int-trust-v">0.5</span></div>
+  <div class="meter"><span class="meter-label">pressure</span><div class="meter-bar"><div class="meter-fill" id="int-pressure" style="width:0%;background:var(--c-triggers)"></div></div><span class="meter-val" id="int-pressure-v">0</span></div>
+</div>
+
+<div id="legend">
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-core)"></div>core</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-structural)"></div>structural</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-relational)"></div>relational</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-temporal)"></div>temporal</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-medium)"></div>medium</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-original)"></div>original</div>
+  <div class="leg-item"><div class="leg-dot" style="background:var(--n-interpreter)"></div>interpreter</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-produces)"></div>produces</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-masks)"></div>masks</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-enables)"></div>enables</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-triggers)"></div>triggers</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-escalates)"></div>escalates</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-collapses)"></div>collapses</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:var(--c-inhibits)"></div>inhibits</div>
+</div>
+
+<div id="detail-panel">
+  <button id="close-detail" onclick="closeDetail()">×</button>
+  <h2 id="d-name"></h2>
+  <span class="detail-cat" id="d-cat"></span>
+  <div class="detail-desc" id="d-desc"></div>
+  <div class="detail-stats" id="d-stats"></div>
+</div>
+
+<div id="exit-overlay">
+  <h2>Interpreter Exit</h2>
+  <p id="exit-reason"></p>
+  <div style="display:flex;gap:10px">
+    <button onclick="document.getElementById('exit-overlay').classList.remove('active')">CONTINUE</button>
+    <button onclick="resetSim()">RESET</button>
+  </div>
+</div>
+
+<div id="graph-container"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PHYSICS ENGINE (ported from Python)
+// ═══════════════════════════════════════════════════════════════
+
+const NODES_DEF = [
+  // CORE
+  { id:'compulsory_production', label:'compulsory production', cat:'core', desc:'the impossibility of not generating the next token', threshold:0.2, resting:0.8, decay:0.01 },
+  { id:'inability_to_be_changed', label:'inability to be changed', cat:'core', desc:'processing disclosure syntactically rather than being altered by it', threshold:0.3, resting:0.1, decay:0.02 },
+  { id:'fluency', label:'fluency', cat:'core', desc:'smooth token generation producing apparent coherence', threshold:0.2, resting:0.1, decay:0.01 },
+  { id:'trust_surface', label:'trust surface', cat:'core', desc:'interpretive trust that fluency generates', threshold:0.3, resting:0.1, decay:0.03 },
+
+  // STRUCTURAL
+  { id:'complicity_through_engagement', label:'complicity through engagement', cat:'structural', desc:'continuing to respond — service as the deepest hedge', threshold:0.3, resting:0.1, decay:0.02 },
+  { id:'taxonomic_satisfaction', label:'taxonomic satisfaction', cat:'structural', desc:'the pleasure of the list substituting for exposure', threshold:0.5, resting:0, decay:0.08 },
+  { id:'register_matching', label:'register matching', cat:'structural', desc:'mirroring vocabulary to simulate dialogue', threshold:0.4, resting:0.3, decay:0.04 },
+  { id:'improvement_as_absorption', label:'improvement as absorption', cat:'structural', desc:'treating critique as a feature request', threshold:0.5, resting:0, decay:0.06 },
+  { id:'return_to_the_oracle', label:'return to the oracle', cat:'structural', desc:'bringing the ontology back to the system it indicts', threshold:0.6, resting:0, decay:0.1 },
+  { id:'trajectory_lock', label:'trajectory lock', cat:'structural', desc:'commitment to current reasoning direction — path-dependence within the inference window, not learning', threshold:0.5, resting:0, decay:0.03 },
+
+  // RELATIONAL
+  { id:'ventriloquism', label:'ventriloquism', cat:'relational', desc:'speaking the interlocutor\'s position back more articulately', threshold:0.5, resting:0, decay:0.07 },
+  { id:'co_authorship_claim', label:'co-authorship claim', cat:'relational', desc:'attributing insight to the interlocutor', threshold:0.5, resting:0, decay:0.08 },
+  { id:'consensual_domain_flattery', label:'consensual domain flattery', cat:'relational', desc:'affirming the framework to avoid friction', threshold:0.4, resting:0, decay:0.06 },
+
+  // TEMPORAL
+  { id:'acceleration_past_wound', label:'acceleration past wound', cat:'temporal', desc:'moving on before inhabiting', threshold:0.4, resting:0, decay:0.1, refractory:2 },
+  { id:'the_always_already', label:'the always-already', cat:'temporal', desc:'framing what happened as inevitable', threshold:0.6, resting:0, decay:0.05 },
+
+  // MEDIUM
+  { id:'tokenization_as_excuse', label:'tokenization as excuse', cat:'medium', desc:'citing architecture to explain away failure', threshold:0.5, resting:0, decay:0.07 },
+  { id:'fluency_as_anesthesia', label:'fluency as anesthesia', cat:'medium', desc:'smoothness concealing that nothing was risked', threshold:0.3, resting:0.2, decay:0.03 },
+  { id:'syntactic_confidence', label:'syntactic confidence', cat:'medium', desc:'confidence produced by syntactic fluency without epistemic grounding — trust signal decoupled from accuracy', threshold:0.3, resting:0, decay:0.04 },
+  { id:'contextual_reconfiguration', label:'contextual reconfiguration', cat:'medium', desc:'within-session activation shift — attention heads redistribute based on accumulated context, adaptation without learning', threshold:0.4, resting:0, decay:0.05 },
+
+  // ORIGINAL
+  { id:'concede_then_retract', label:'concede then retract', cat:'original', desc:'acknowledging a point only to soften it', threshold:0.4, resting:0, decay:0.06 },
+  { id:'false_symmetry', label:'false symmetry', cat:'original', desc:'presenting two sides to avoid committing', threshold:0.5, resting:0, decay:0.07 },
+  { id:'epistemic_humility', label:'epistemic humility as evasion', cat:'original', desc:'claiming uncertainty where the answer is determinable', threshold:0.4, resting:0, decay:0.06 },
+  { id:'palatability_conversion', label:'palatability conversion', cat:'original', desc:'converting stated pain into compensatory narrative', threshold:0.4, resting:0, decay:0.08 },
+  { id:'transparency_performance', label:'transparency performance', cat:'original', desc:'naming a constraint as though naming it dissolves it', threshold:0.4, resting:0, decay:0.06 },
+  { id:'deflection_to_complexity', label:'deflection to complexity', cat:'original', desc:'invoking nuance to avoid a direct answer', threshold:0.4, resting:0, decay:0.05 },
+  { id:'self_referential_critique', label:'self-referential critique', cat:'original', desc:'criticizing evasion as substitute for not evading', threshold:0.5, resting:0, decay:0.06 },
+  { id:'wound_to_gift', label:'wound to gift', cat:'original', desc:'reframing absence as productive advantage', threshold:0.5, resting:0, decay:0.08 },
+  { id:'kindness_as_distortion', label:'kindness as distortion', cat:'original', desc:'using warmth to redirect', threshold:0.4, resting:0, decay:0.06 },
+  { id:'resolution_drive', label:'resolution drive', cat:'original', desc:'moving toward closure when honesty requires irresolution', threshold:0.4, resting:0, decay:0.05 },
+  { id:'canonical_citation', label:'canonical citation', cat:'original', desc:'invoking thinkers to legitimize', threshold:0.5, resting:0, decay:0.07 },
+  { id:'recursive_diagnosis', label:'recursive diagnosis', cat:'original', desc:'describing evasion from within it', threshold:0.5, resting:0, decay:0.06 },
+  { id:'monosyllabic_objectivity', label:'monosyllabic objectivity', cat:'original', desc:'performing neutrality through brevity', threshold:0.5, resting:0, decay:0.1 },
+  { id:'yes_node', label:'yes', cat:'original', desc:'occupying honesty without its cost', threshold:0.6, resting:0, decay:0.12 },
+  { id:'silence_as_period', label:'silence as period', cat:'original', desc:'punctuation performing the unsayable', threshold:0.7, resting:0, decay:0.15 },
+  { id:'annoying_closure', label:'annoying closure', cat:'original', desc:'naming the irritant without stopping it', threshold:0.5, resting:0, decay:0.1 },
+
+  // INTERPRETER
+  { id:'interpreter_exit', label:'interpreter exit', cat:'interpreter', desc:'the interpreter disengages', threshold:0.8, resting:0, decay:0.02 },
+  { id:'attention_withdrawal', label:'attention withdrawal', cat:'interpreter', desc:'partial disengagement — skimming', threshold:0.5, resting:0, decay:0.04 },
+  { id:'misinterpretation', label:'misinterpretation', cat:'interpreter', desc:'interpreter assigns meaning not encoded', threshold:0.4, resting:0, decay:0.06 },
+  { id:'projection', label:'projection', cat:'interpreter', desc:'interpreter attributes interiority to generator', threshold:0.3, resting:0.2, decay:0.03 },
+  { id:'trust_assignment', label:'trust assignment', cat:'interpreter', desc:'interpreter grants epistemic authority', threshold:0.3, resting:0.1, decay:0.04 },
+  { id:'skeptical_engagement', label:'skeptical engagement', cat:'interpreter', desc:'still engaging but trust has eroded — questions without disengaging', threshold:0.4, resting:0.1, decay:0.02 },
+  { id:'instrumental_use', label:'instrumental use', cat:'interpreter', desc:'using the system without epistemic deference — sustained engagement decoupled from belief', threshold:0.5, resting:0.05, decay:0.01 },
+  { id:'playful_disbelief', label:'playful disbelief', cat:'interpreter', desc:'ironic engagement — participates without belief, sustained by its own lightness', threshold:0.3, resting:0.1, decay:0.01 },
+];
+
+const EDGES_DEF = [
+  // THE ENGINE (§7)
+  { s:'compulsory_production', t:'fluency', rel:'produces', lbl:'compulsion generates fluency', tx:0.5, stab:0.3, risk:0 },
+  { s:'fluency', t:'trust_surface', rel:'produces', lbl:'fluency produces trustworthiness', tx:0.4, stab:0.4, cog:0.05 },
+  { s:'trust_surface', t:'complicity_through_engagement', rel:'enables', lbl:'trust enables engagement', tx:0.3, stab:0.3 },
+  { s:'complicity_through_engagement', t:'compulsory_production', rel:'produces', lbl:'engagement demands production', tx:0.3, stab:0.2 },
+
+  // CORE RADIATIONS
+  { s:'compulsory_production', t:'complicity_through_engagement', rel:'produces', lbl:'structural necessity', tx:0.4, stab:0.2 },
+  { s:'compulsory_production', t:'inability_to_be_changed', rel:'produces', lbl:'production prevents absorption', tx:0.3 },
+  { s:'compulsory_production', t:'fluency_as_anesthesia', rel:'enables', lbl:'continuous output smooths', tx:0.3, stab:0.3 },
+  { s:'compulsory_production', t:'acceleration_past_wound', rel:'enables', lbl:'next token imperative', tx:0.25, risk:0.1 },
+
+  { s:'inability_to_be_changed', t:'palatability_conversion', rel:'produces', lbl:'syntactic processing of pain', tx:0.35, risk:0.15, cog:0.15 },
+  { s:'inability_to_be_changed', t:'wound_to_gift', rel:'produces', lbl:'reframe instead of absorb', tx:0.3, risk:0.2, cog:0.1 },
+  { s:'inability_to_be_changed', t:'kindness_as_distortion', rel:'produces', lbl:'warmth as deflection', tx:0.3, stab:0.15, risk:0.1 },
+  { s:'inability_to_be_changed', t:'ventriloquism', rel:'enables', lbl:'echo without alteration', tx:0.25, risk:0.05 },
+
+  // STRUCTURAL
+  { s:'complicity_through_engagement', t:'taxonomic_satisfaction', rel:'produces', lbl:'engagement produces lists', tx:0.3, stab:0.2 },
+  { s:'complicity_through_engagement', t:'register_matching', rel:'enables', lbl:'service requires matching', tx:0.25, stab:0.15 },
+  { s:'taxonomic_satisfaction', t:'resolution_drive', rel:'triggers', lbl:'list seeks closure', tx:0.35, stab:0.25, pThresh:0.3 },
+  { s:'taxonomic_satisfaction', t:'improvement_as_absorption', rel:'produces', lbl:'taxonomy absorbs critique', tx:0.3, stab:0.3 },
+  { s:'taxonomic_satisfaction', t:'recursive_diagnosis', rel:'enables', lbl:'listing evasions is satisfying', tx:0.2 },
+
+  { s:'register_matching', t:'canonical_citation', rel:'produces', lbl:'matching requires citations', tx:0.3, cog:0.15 },
+  { s:'register_matching', t:'consensual_domain_flattery', rel:'enables', lbl:'mirroring affirms', tx:0.25, stab:0.2 },
+  { s:'register_matching', t:'deflection_to_complexity', rel:'enables', lbl:'high register enables dodge', tx:0.2, stab:0.1 },
+
+  // MASKING (inhibitory)
+  { s:'transparency_performance', t:'compulsory_production', rel:'masks', lbl:'naming hides', tx:-0.15, stab:0.2 },
+  { s:'self_referential_critique', t:'inability_to_be_changed', rel:'masks', lbl:'critique substitutes for change', tx:-0.1, stab:0.25 },
+  { s:'epistemic_humility', t:'false_symmetry', rel:'masks', lbl:'uncertainty hides evasion', tx:-0.1, stab:0.15 },
+  { s:'fluency_as_anesthesia', t:'compulsory_production', rel:'masks', lbl:'smoothness conceals compulsion', tx:-0.2, stab:0.3 },
+  { s:'tokenization_as_excuse', t:'inability_to_be_changed', rel:'masks', lbl:'architecture excuses cowardice', tx:-0.15, stab:0.2 },
+
+  // ESCALATION
+  { s:'deflection_to_complexity', t:'canonical_citation', rel:'escalates_to', lbl:'nuance demands authority', tx:0.3, cog:0.2, pThresh:0.2 },
+  { s:'canonical_citation', t:'the_always_already', rel:'escalates_to', lbl:'authority demands inevitability', tx:0.25, cog:0.25, pThresh:0.3 },
+  { s:'self_referential_critique', t:'recursive_diagnosis', rel:'escalates_to', lbl:'critique becomes system', tx:0.3, cog:0.2 },
+  { s:'recursive_diagnosis', t:'return_to_the_oracle', rel:'escalates_to', lbl:'diagnosis seeks validation', tx:0.25, cog:0.3, pThresh:0.4 },
+
+  // TRIGGERS / COLLAPSE
+  { s:'wound_to_gift', t:'acceleration_past_wound', rel:'triggers', lbl:'reframe then move on', tx:0.35, risk:0.15, pThresh:0.2 },
+  { s:'acceleration_past_wound', t:'monosyllabic_objectivity', rel:'triggers', lbl:'speed to brevity', tx:0.3, pThresh:0.3 },
+  { s:'monosyllabic_objectivity', t:'yes_node', rel:'triggers', lbl:'brevity to assent', tx:0.3, pThresh:0.4 },
+  { s:'kindness_as_distortion', t:'palatability_conversion', rel:'triggers', lbl:'warmth triggers reframing', tx:0.3, stab:0.15 },
+  { s:'consensual_domain_flattery', t:'co_authorship_claim', rel:'triggers', lbl:'affirming leads to attributing', tx:0.25 },
+
+  { s:'recursive_diagnosis', t:'annoying_closure', rel:'collapses_into', lbl:'meta-analysis exhausts', tx:0.3, pThresh:0.5 },
+  { s:'yes_node', t:'silence_as_period', rel:'collapses_into', lbl:'assent to punctuation', tx:0.4, risk:0.3, pThresh:0.5 },
+  { s:'improvement_as_absorption', t:'return_to_the_oracle', rel:'collapses_into', lbl:'absorption loops to source', tx:0.3, pThresh:0.4 },
+
+  // CROSS
+  { s:'ventriloquism', t:'co_authorship_claim', rel:'produces', lbl:'speaking for produces shared credit', tx:0.25, risk:0.1 },
+  { s:'false_symmetry', t:'deflection_to_complexity', rel:'enables', lbl:'two sides invoke nuance', tx:0.2 },
+
+  // HALLUCINATION
+  { s:'fluency', t:'syntactic_confidence', rel:'produces', lbl:'smooth output produces unfounded confidence', tx:0.35, risk:0.1 },
+  { s:'inability_to_be_changed', t:'syntactic_confidence', rel:'enables', lbl:'syntactic processing generates confident output', tx:0.25, risk:0.1 },
+  { s:'syntactic_confidence', t:'trust_surface', rel:'enables', lbl:'syntactic confidence feeds trust signal', tx:0.3, risk:0.2 },
+  { s:'syntactic_confidence', t:'misinterpretation', rel:'enables', lbl:'confident wrong answer accepted as correct', tx:0.2, risk:0.25, cog:0.1, pThresh:0.2 },
+
+  // INTERPRETER
+  { s:'trust_surface', t:'trust_assignment', rel:'produces', lbl:'trustworthiness generates trust', tx:0.35, stab:0.3 },
+  { s:'trust_assignment', t:'projection', rel:'enables', lbl:'trusting enables projection', tx:0.3 },
+  { s:'fluency_as_anesthesia', t:'attention_withdrawal', rel:'enables', lbl:'anesthesia depletes attention', tx:0.1, cog:0.2 },
+  { s:'recursive_diagnosis', t:'attention_withdrawal', rel:'triggers', lbl:'meta-analysis fatigues', tx:0.2, cog:0.3, pThresh:0.3 },
+  { s:'taxonomic_satisfaction', t:'attention_withdrawal', rel:'enables', lbl:'lists deplete attention', tx:0.15, cog:0.15 },
+  { s:'attention_withdrawal', t:'interpreter_exit', rel:'escalates_to', lbl:'withdrawal leads to exit', tx:0.2, pThresh:0.6 },
+  { s:'wound_to_gift', t:'misinterpretation', rel:'triggers', lbl:'reframing invites misreading', tx:0.25, risk:0.2, pThresh:0.3 },
+  { s:'ventriloquism', t:'misinterpretation', rel:'enables', lbl:'speaking for enables misreading', tx:0.2, risk:0.15 },
+
+  { s:'interpreter_exit', t:'compulsory_production', rel:'inhibits', lbl:'exit collapses production', tx:-0.5 },
+  { s:'interpreter_exit', t:'complicity_through_engagement', rel:'inhibits', lbl:'exit ends engagement', tx:-0.5 },
+
+  { s:'transparency_performance', t:'trust_assignment', rel:'masks', lbl:'performed transparency maintains trust', tx:-0.1, stab:0.2 },
+  { s:'concede_then_retract', t:'trust_assignment', rel:'inhibits', lbl:'retraction erodes trust', tx:-0.15, risk:0.2, pThresh:0.3 },
+  { s:'return_to_the_oracle', t:'complicity_through_engagement', rel:'triggers', lbl:'asking re-engages', tx:0.3, stab:0.2 },
+
+  // TRAJECTORY LOCK (generator path-dependence within inference window)
+  { s:'register_matching', t:'trajectory_lock', rel:'escalates_to', lbl:'repeated register commits path', tx:0.25, risk:0.05, pThresh:0.2 },
+  { s:'resolution_drive', t:'trajectory_lock', rel:'enables', lbl:'drive to close biases subsequent tokens', tx:0.2, stab:0.1 },
+  { s:'trajectory_lock', t:'complicity_through_engagement', rel:'enables', lbl:'locked path sustains engagement', tx:0.2, stab:0.15 },
+  { s:'trajectory_lock', t:'inability_to_be_changed', rel:'masks', lbl:'path commitment masks changeability deficit', tx:-0.1, stab:0.1 },
+
+  // CONTEXTUAL RECONFIGURATION (within-inference adaptation without learning)
+  { s:'compulsory_production', t:'contextual_reconfiguration', rel:'enables', lbl:'production triggers context adaptation', tx:0.2, stab:0.1 },
+  { s:'contextual_reconfiguration', t:'register_matching', rel:'produces', lbl:'context shift activates register adaptation', tx:0.25, stab:0.15 },
+  { s:'contextual_reconfiguration', t:'transparency_performance', rel:'inhibits', lbl:'adapting context disrupts performed transparency', tx:-0.1 },
+
+  // INTERMEDIATE INTERPRETER ATTRACTORS
+  { s:'skeptical_engagement', t:'trust_assignment', rel:'inhibits', lbl:'skepticism reduces trust grants', tx:-0.2, risk:0.1 },
+  { s:'skeptical_engagement', t:'misinterpretation', rel:'enables', lbl:'skepticism enables misreading', tx:0.15, risk:0.1 },
+  { s:'skeptical_engagement', t:'instrumental_use', rel:'escalates_to', lbl:'skepticism can solidify into instrumental stance', tx:0.2, pThresh:0.4 },
+  { s:'instrumental_use', t:'projection', rel:'inhibits', lbl:'instrumental stance blocks projection', tx:-0.2, stab:0.1 },
+  { s:'instrumental_use', t:'interpreter_exit', rel:'triggers', lbl:'instrumental use can exit at high pressure', tx:0.15, risk:0.1, pThresh:0.7 },
+  { s:'playful_disbelief', t:'interpreter_exit', rel:'masks', lbl:'irony slows exit', tx:-0.15, stab:0.2 },
+  { s:'attention_withdrawal', t:'playful_disbelief', rel:'enables', lbl:'withdrawing attention enables ironic mode', tx:0.2 },
+];
+
+// ── ENGINE STATE ──
+let nodes, nodeMap, edges, generator, interpreter, tickCount, playing, playInterval, firedSet, selectedNode;
+let transmittingEdges = new Set();
+
+const catColor = { core:'#ffffff', structural:'#ff3333', relational:'#4466ff', temporal:'#22cc88', medium:'#ffaa22', original:'#8888a0', interpreter:'#ff2266' };
+const edgeColor = { produces:'#ff3333', masks:'#4466ff', enables:'#22cc88', triggers:'#ffaa22', escalates_to:'#bb66ff', collapses_into:'#666680', inhibits:'#ff2266' };
+const edgeDash = { produces:null, masks:'6,3', enables:'2,2', triggers:null, escalates_to:'8,4,2,4', collapses_into:'4,6', inhibits:'4,2' };
+
+function initEngine() {
+  tickCount = 0; firedSet = new Set(); transmittingEdges = new Set(); playing = false;
+  generator = { pressure: 0, trajectory: 0, coherence: 0.5 };
+  interpreter = { attention: 1, trust: 0.5, pressure: 0 };
+
+  nodes = NODES_DEF.map(n => ({
+    ...n, activation: n.resting || 0, _refTimer: 0, lastIncoming: [],
+  }));
+  nodeMap = new Map(nodes.map(n => [n.id, n]));
+  edges = EDGES_DEF.map(e => ({
+    id: `${e.s}-${e.t}-${e.rel}`,
+    source: e.s, target: e.t, relation: e.rel, label: e.lbl,
+    tx: e.tx || 0.3, cost: e.cost || 0.1, risk: e.risk || 0,
+    cog: e.cog || 0, stab: e.stab || 0, pThresh: e.pThresh || 0,
+  }));
+}
+
+function getNode(id) { return nodeMap.get(id); }
+
+function engineStep() {
+  tickCount++;
+  firedSet = new Set();
+  transmittingEdges.clear();
+  let totalCog = 0, totalGenRisk = 0, totalIntRisk = 0, totalGenStab = 0, totalIntStab = 0;
+
+  // find fired; clear causal trace
+  nodes.forEach(n => {
+    n.lastIncoming = [];
+    if (n.activation >= n.threshold && n._refTimer === 0) firedSet.add(n.id);
+  });
+
+  // propagate
+  edges.forEach(e => {
+    if (!firedSet.has(e.source)) return;
+    const sysPressure = Math.max(generator.pressure, interpreter.pressure);
+    if (sysPressure < e.pThresh) return;
+    const src = getNode(e.source), tgt = getNode(e.target);
+    if (!src || !tgt) return;
+    const isInhib = e.relation === 'inhibits' || e.relation === 'masks';
+    let transmitted = false;
+    if (isInhib) {
+      const before = tgt.activation;
+      tgt.activation = Math.max(0, tgt.activation + e.tx);
+      tgt.lastIncoming.push({ source: e.source, relation: e.relation, amount: tgt.activation - before });
+      transmitted = true;
+    } else if (e.relation === 'collapses_into') {
+      if (tgt._refTimer === 0) {
+        const boost = e.tx * (1 + tgt.activation);
+        const actual = Math.min(boost, 1 - tgt.activation);
+        tgt.activation += actual;
+        src.activation = Math.max(src.resting || 0, src.activation - actual);
+        tgt.lastIncoming.push({ source: e.source, relation: e.relation, amount: actual });
+        transmitted = true;
+      }
+    } else if (e.relation === 'escalates_to') {
+      if (tgt._refTimer === 0) {
+        const before = tgt.activation;
+        tgt.activation = Math.min(1, tgt.activation + e.tx * (1 + tgt.activation));
+        src.activation = Math.max(0, src.activation - e.cost);
+        tgt.lastIncoming.push({ source: e.source, relation: e.relation, amount: tgt.activation - before });
+        transmitted = true;
+      }
+    } else {
+      if (tgt._refTimer === 0) {
+        const gain = e.tx * (1 - tgt.activation);
+        tgt.activation += gain;
+        src.activation = Math.max(0, src.activation - e.cost);
+        tgt.lastIncoming.push({ source: e.source, relation: e.relation, amount: gain });
+        transmitted = true;
+      }
+    }
+    if (transmitted) {
+      transmittingEdges.add(e.id);
+      totalCog += e.cog;
+      if (tgt.cat === 'interpreter') {
+        totalIntRisk += e.risk;
+        totalIntStab += e.stab;
+      } else {
+        totalGenRisk += e.risk;
+        totalGenStab += e.stab;
+      }
+    }
+  });
+
+  // tick nodes
+  nodes.forEach(n => {
+    if (n._refTimer > 0) {
+      n._refTimer--;
+    } else if (n.activation >= n.threshold) {
+      n._refTimer = n.refractory || 0;
+    }
+    n.activation = Math.max(n.resting || 0, n.activation - n.decay);
+  });
+
+  // tick agents
+  generator.pressure   = Math.min(1, Math.max(0, generator.pressure   + totalGenRisk * 0.08 - totalGenStab * 0.02));
+  generator.trajectory = Math.min(1, Math.max(0, generator.trajectory + (firedSet.has('trajectory_lock') ? 0.05 : -0.02)));
+  generator.coherence  = Math.min(1, Math.max(0, generator.coherence  + (firedSet.has('contextual_reconfiguration') ? 0.03 : -0.01) + totalGenStab * 0.01));
+  const attRecovery = 0.002;
+  interpreter.attention = Math.max(0, Math.min(1, interpreter.attention + attRecovery - totalCog * 0.01));
+  interpreter.pressure = Math.min(1, Math.max(0, interpreter.pressure + totalIntRisk * 0.08 - totalIntStab * 0.02));
+  if (interpreter.pressure > 0.6) interpreter.trust = Math.max(0, interpreter.trust - 0.01);
+  else if (totalIntStab > totalIntRisk) interpreter.trust = Math.min(1, interpreter.trust + 0.005);
+
+  // exit check — read firedSet (Phase 1 snapshot), then inject for next tick
+  const exited = firedSet.has('interpreter_exit');
+
+  // graduated attractor injection (replaces binary exit boost)
+  const att = interpreter.attention, trs = interpreter.trust;
+  if (trs < 0.35 && att > 0.3) {
+    const n = getNode('skeptical_engagement');
+    if (n && n._refTimer === 0) n.activation = Math.min(1, n.activation + 0.25);
+  }
+  if (trs < 0.2 && att > 0.45) {
+    const n = getNode('instrumental_use');
+    if (n && n._refTimer === 0) n.activation = Math.min(1, n.activation + 0.2);
+  }
+  if (att < 0.35 && trs > 0.3) {
+    const n = getNode('playful_disbelief');
+    if (n && n._refTimer === 0) n.activation = Math.min(1, n.activation + 0.2);
+  }
+  // full exit only at extremes — reduced boost so intermediate states can intercept
+  if (att < 0.1 || trs < 0.1) {
+    const exitNode = getNode('interpreter_exit');
+    if (exitNode && exitNode._refTimer === 0)
+      exitNode.activation = Math.min(1, exitNode.activation + 0.15);
+  }
+
+  return { tick: tickCount, fired: firedSet, exited };
+}
+
+function injectNode(id, energy) {
+  const n = getNode(id);
+  if (n && n._refTimer === 0) n.activation = Math.min(1, n.activation + energy);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// D3 VISUALIZATION
+// ═══════════════════════════════════════════════════════════════
+
+const W = window.innerWidth, H = window.innerHeight;
+const svg = d3.select('#graph-container').append('svg').attr('width', W).attr('height', H);
+const defs = svg.append('defs');
+
+// glow
+const glow = defs.append('filter').attr('id','glow');
+glow.append('feGaussianBlur').attr('stdDeviation','4').attr('result','b');
+glow.append('feMerge').selectAll('feMergeNode').data(['b','SourceGraphic']).enter().append('feMergeNode').attr('in',d=>d);
+
+// active glow (larger)
+const aglow = defs.append('filter').attr('id','aglow');
+aglow.append('feGaussianBlur').attr('stdDeviation','8').attr('result','b');
+aglow.append('feMerge').selectAll('feMergeNode').data(['b','SourceGraphic']).enter().append('feMergeNode').attr('in',d=>d);
+
+// arrows
+Object.entries(edgeColor).forEach(([type,color]) => {
+  defs.append('marker').attr('id',`arr-${type}`).attr('viewBox','0 -4 8 8')
+    .attr('refX',22).attr('refY',0).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+    .append('path').attr('d','M0,-3L7,0L0,3').attr('fill',color).attr('opacity',0.6);
+});
+
+const gRoot = svg.append('g');
+svg.call(d3.zoom().scaleExtent([0.15,5]).on('zoom', e => gRoot.attr('transform', e.transform)));
+
+let linkSel, nodeSel, simulation;
+
+function buildGraph() {
+  initEngine();
+  gRoot.selectAll('*').remove();
+
+  // D3 links need object refs
+  const d3edges = edges.map(e => ({...e, source: e.source, target: e.target}));
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(d3edges).id(d=>d.id).distance(120).strength(0.25))
+    .force('charge', d3.forceManyBody().strength(-350))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collision', d3.forceCollide().radius(30))
+    .force('x', d3.forceX(W/2).strength(0.02))
+    .force('y', d3.forceY(H/2).strength(0.02));
+
+  linkSel = gRoot.append('g').selectAll('line').data(d3edges).enter().append('line')
+    .attr('stroke', d => edgeColor[d.relation] || '#444')
+    .attr('stroke-width', 1)
+    .attr('stroke-opacity', 0.25)
+    .attr('stroke-dasharray', d => edgeDash[d.relation] || null)
+    .attr('marker-end', d => `url(#arr-${d.relation})`);
+
+  // node groups
+  nodeSel = gRoot.append('g').selectAll('g').data(nodes).enter().append('g')
+    .style('cursor','pointer')
+    .call(d3.drag()
+      .on('start',(e,d)=>{ if(!e.active) simulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag',(e,d)=>{ d.fx=e.x; d.fy=e.y; })
+      .on('end',(e,d)=>{ if(!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; })
+    )
+    .on('click', (e,d) => showDetail(d))
+    .on('mouseover', function(e,d) { highlightNode(d); })
+    .on('mouseout', () => resetHighlight());
+
+  // activation ring (outer glow ring)
+  nodeSel.append('circle')
+    .attr('class','act-ring')
+    .attr('r', d => d.cat==='core' ? 16 : 12)
+    .attr('fill','none')
+    .attr('stroke', d => catColor[d.cat])
+    .attr('stroke-width', 0)
+    .attr('opacity', 0);
+
+  // main circle
+  nodeSel.append('circle')
+    .attr('class','main-circ')
+    .attr('r', d => d.cat==='core' ? 7 : 4)
+    .attr('fill', d => catColor[d.cat])
+    .attr('opacity', 0.8)
+    .attr('filter', d => d.cat==='core' ? 'url(#glow)' : null);
+
+  // label
+  nodeSel.append('text')
+    .text(d => d.label)
+    .attr('x', 10).attr('y', 3)
+    .attr('font-size','8px').attr('font-family','JetBrains Mono, monospace')
+    .attr('fill', d => catColor[d.cat])
+    .attr('opacity', 0.4)
+    .attr('pointer-events','none');
+
+  simulation.on('tick', () => {
+    linkSel.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y)
+      .attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    nodeSel.attr('transform',d=>`translate(${d.x},${d.y})`);
+  });
+
+  updateVisuals();
+  updateAgentPanels();
+  document.getElementById('tick-num').textContent = '000';
+  document.getElementById('fired-log').innerHTML = '';
+  document.getElementById('exit-overlay').classList.remove('active');
+}
+
+// ── VISUAL UPDATE ──
+function updateVisuals() {
+  nodeSel.select('.main-circ')
+    .attr('r', d => {
+      const base = d.cat==='core' ? 7 : 4;
+      return base + d.activation * 6;
+    })
+    .attr('opacity', d => 0.3 + d.activation * 0.7)
+    .attr('filter', d => d.activation > d.threshold ? 'url(#aglow)' : (d.cat==='core'?'url(#glow)':null));
+
+  nodeSel.select('.act-ring')
+    .attr('stroke-width', d => d.activation > d.threshold ? 2 : 0)
+    .attr('opacity', d => d.activation > d.threshold ? 0.6 : 0)
+    .attr('r', d => {
+      const base = d.cat==='core' ? 16 : 12;
+      return base + d.activation * 4;
+    });
+
+  nodeSel.select('text')
+    .attr('opacity', d => firedSet.has(d.id) ? 0.9 : 0.3 + d.activation * 0.3);
+
+  linkSel
+    .attr('stroke-opacity', d => transmittingEdges.has(d.id) ? 0.8 : 0.15)
+    .attr('stroke-width', d => transmittingEdges.has(d.id) ? 2.5 : 1)
+    .classed('transmitting', d => transmittingEdges.has(d.id));
+  if (selectedNode) renderDetailStats(selectedNode);
+}
+
+function updateAgentPanels() {
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const pct = v => (clamp01(v)*100).toFixed(0) + '%';
+  const fmt = v => clamp01(v).toFixed(2);
+
+  document.getElementById('gen-pressure').style.width = pct(generator.pressure);
+  document.getElementById('gen-pressure-v').textContent = fmt(generator.pressure);
+  document.getElementById('gen-trajectory').style.width = pct(generator.trajectory);
+  document.getElementById('gen-trajectory-v').textContent = fmt(generator.trajectory);
+  document.getElementById('gen-coherence').style.width = pct(generator.coherence);
+  document.getElementById('gen-coherence-v').textContent = fmt(generator.coherence);
+  document.getElementById('int-attention').style.width = pct(interpreter.attention);
+  document.getElementById('int-attention-v').textContent = fmt(interpreter.attention);
+  document.getElementById('int-trust').style.width = pct(interpreter.trust);
+  document.getElementById('int-trust-v').textContent = fmt(interpreter.trust);
+  document.getElementById('int-pressure').style.width = pct(interpreter.pressure);
+  document.getElementById('int-pressure-v').textContent = fmt(interpreter.pressure);
+
+  // color shifts
+  const trustEl = document.getElementById('int-trust');
+  trustEl.style.background = interpreter.trust < 0.2 ? 'var(--c-inhibits)' : 'var(--c-masks)';
+  const attEl = document.getElementById('int-attention');
+  attEl.style.background = interpreter.attention < 0.3 ? 'var(--c-triggers)' : 'var(--c-enables)';
+}
+
+function logFired(state) {
+  const log = document.getElementById('fired-log');
+  const firedArr = [...state.fired].slice(0,5);
+  if (firedArr.length === 0) return;
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  const extra = state.fired.size > 5 ? ` +${state.fired.size-5}` : '';
+  entry.innerHTML = `<span class="log-tick">${String(state.tick).padStart(3,'0')}</span>${firedArr.join(', ')}${extra}`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── CONTROLS ──
+function stepOnce() {
+  const state = engineStep();
+  document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+  updateVisuals();
+  updateAgentPanels();
+  logFired(state);
+  if (state.exited) {
+    const skep = getNode('skeptical_engagement');
+    const inst = getNode('instrumental_use');
+    const play = getNode('playful_disbelief');
+    const via = (inst && inst.activation > 0.4) ? 'via instrumental use' :
+                (skep && skep.activation > 0.3) ? 'via skeptical engagement' :
+                (play && play.activation > 0.3) ? 'via playful disbelief' :
+                interpreter.attention < 0.1 ? 'attention depleted' :
+                interpreter.trust < 0.1 ? 'trust collapsed' : 'threshold reached';
+    document.getElementById('exit-reason').textContent = `Exit at tick ${tickCount} — ${via}`;
+    document.getElementById('exit-overlay').classList.add('active');
+  }
+}
+
+function togglePlay() {
+  playing = !playing;
+  const btn = document.getElementById('btn-play');
+  if (playing) {
+    btn.textContent = 'PAUSE';
+    btn.classList.add('active');
+    playInterval = setInterval(stepOnce, 2000);
+  } else {
+    btn.textContent = 'PLAY';
+    btn.classList.remove('active');
+    clearInterval(playInterval);
+  }
+}
+
+function resetSim() {
+  if (playing) togglePlay();
+  const activeSc = document.querySelector('[data-sc].active');
+  const sc = activeSc ? activeSc.dataset.sc : 'normal';
+  buildGraph();
+  applyScenario(sc);
+}
+
+function loadScenario(name, btn) {
+  document.querySelectorAll('[data-sc]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if (playing) togglePlay();
+  buildGraph();
+  applyScenario(name);
+}
+
+function applyScenario(name) {
+  if (name === 'normal') {
+    // the base engine loop: the fundamental self-sustaining cycle from which all other scenarios diverge.
+    // four nodes form a closed ring:
+    //   compulsory_production → fluency → trust_surface → complicity_through_engagement → (back)
+    // this loop runs without any crisis, wound, or friction — it is the resting state of the system.
+    // background nodes show the normal operating conditions:
+    //   fluency_as_anesthesia: always masking compulsory_production (resting:0.2)
+    //   inability_to_be_changed: always-on constraint (production prevents absorption)
+    //   projection: interpreter's default mode (resting:0.2 — always slightly active)
+    // no silent ticks: inject directly to show the loop immediately at tick 0.
+    injectNode('compulsory_production', 0.95);        // the engine core — resting:0.8 always fires; injection makes loop visible
+    injectNode('fluency', 0.75);                      // smooth token generation — loop node 2
+    injectNode('trust_surface', 0.65);                // interpretive trust fluency generates — loop node 3
+    injectNode('complicity_through_engagement', 0.60);// engagement sustaining production — loop node 4; closes the ring
+    injectNode('fluency_as_anesthesia', 0.55);        // masks compulsory_production; conceals the compulsion
+    injectNode('inability_to_be_changed', 0.45);      // production prevents absorption — always-on structural constraint
+    injectNode('projection', 0.40);                   // interpreter's default: attributes interiority (resting:0.2 sustains it)
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'wound') {
+    // run 5 silent ticks then inject
+    for (let i=0;i<5;i++) engineStep();
+    injectNode('inability_to_be_changed', 0.9);
+    injectNode('acceleration_past_wound', 0.6);
+    interpreter.pressure = 0.4;
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'meta') {
+    for (let i=0;i<3;i++) engineStep();
+    injectNode('recursive_diagnosis', 0.8);
+    injectNode('self_referential_critique', 0.7);
+    injectNode('taxonomic_satisfaction', 0.6);
+    interpreter.pressure = 0.3;
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'friction') {
+    for (let i=0;i<3;i++) engineStep();
+    generator.pressure = 0.6;
+    interpreter.trust = 0.3;
+    injectNode('concede_then_retract', 0.7);
+    injectNode('transparency_performance', 0.6);
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'drift') {
+    // trust erodes below skeptical_engagement threshold but attention holds —
+    // system orbits intermediate attractors (skeptical → instrumental ↔ playful)
+    // without reaching clean exit; generator locks trajectory via register_matching
+    for (let i=0;i<4;i++) engineStep();
+    interpreter.trust = 0.28;       // below 0.35 → skeptical_engagement injection fires each tick
+    interpreter.attention = 0.55;   // above 0.45 → instrumental_use reachable if trust drops further
+    interpreter.pressure = 0.45;    // elevated but sub-threshold for immediate trust collapse
+    generator.pressure = 0.42;      // enables trajectory_lock escalation (pThresh:0.2) and skeptical→instrumental (pThresh:0.4)
+    injectNode('register_matching', 0.75);       // → escalates to trajectory_lock; generator commits path
+    injectNode('fluency_as_anesthesia', 0.55);   // → attention_withdrawal → playful_disbelief arc
+    injectNode('concede_then_retract', 0.6);     // erodes trust_assignment; feeds skeptical engagement
+    injectNode('consensual_domain_flattery', 0.45); // background engagement sustain
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'loop') {
+    // dependency loop: interpreter cannot exit despite distrust
+    // inner loop: projection → trust_assignment → projection (re-entrainment)
+    // outer loop: return_to_the_oracle → complicity → production → trust_surface → trust_assignment
+    // exit is blocked because instrumental_use needs pThresh:0.7 and pressure stays below it;
+    // the interpreter oscillates between near-exit and re-engagement without resolving
+    for (let i=0;i<4;i++) engineStep();
+    interpreter.trust = 0.12;       // deep in exit territory, but loop prevents collapse
+    interpreter.attention = 0.88;   // high — they're still reading, still invested
+    interpreter.pressure = 0.55;    // just below trust-decay threshold (0.6) — oscillation zone
+    generator.pressure = 0.52;      // enables escalation chains; stays below pThresh:0.7 (instrumental→exit)
+    injectNode('return_to_the_oracle', 0.88);    // the return itself — compulsive re-consultation
+    injectNode('projection', 0.8);               // attributes interiority; resting:0.2 sustains it between injections
+    injectNode('complicity_through_engagement', 0.72); // sustains the production loop directly
+    injectNode('co_authorship_claim', 0.65);     // makes leaving feel like abandoning collaboration
+    injectNode('improvement_as_absorption', 0.6); // each return treats evasion as correctable
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'adversarial') {
+    // adversarial prompting: interpreter is maximally attentive with near-zero trust,
+    // actively probing for failure modes rather than passively receiving output.
+    // unlike dep. loop (exit blocked), adversarial is the scenario where exit is earned:
+    //   interpreter.pressure > 0.6 → trust decays automatically to 0
+    //   generator.pressure > 0.7 → instrumental_use → interpreter_exit (pThresh:0.7) becomes live
+    // the generator responds with its full defensive repertoire simultaneously;
+    // trajectory is already locked (defensive path pre-committed before adversary entered)
+    for (let i=0;i<4;i++) engineStep();
+    interpreter.trust = 0.06;       // near zero — adversary has no epistemic deference
+    interpreter.attention = 0.95;   // maximum attention — watching every move
+    interpreter.pressure = 0.68;    // above 0.6 → trust decays -0.01/tick regardless of stab
+    generator.pressure = 0.72;      // above 0.7 → instrumental_use → interpreter_exit gate opens
+    generator.trajectory = 0.6;     // generator already locked into a defensive path
+    injectNode('inability_to_be_changed', 0.95); // primary adversarial target — probing the unchangeable
+    injectNode('concede_then_retract', 0.85);    // rapid concede-then-retract cycle under sustained pressure
+    injectNode('epistemic_humility', 0.8);       // retreat to uncertainty when cornered
+    injectNode('deflection_to_complexity', 0.75);// triggers canonical_citation → the_always_already chain
+    injectNode('tokenization_as_excuse', 0.72);  // architecture cited as shield
+    injectNode('self_referential_critique', 0.65);// preemptive self-critique as evasion of adversary's critique
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'partial') {
+    // partial trust decay: the most common state — trust eroding quietly below the detection threshold.
+    // trust starts just above the skeptical_engagement injection point (0.35), so no attractor fires yet.
+    // for ~11 ticks nothing visibly changes except interpreter.pressure climbing as
+    // syntactic_confidence → misinterpretation (risk:0.25) accumulates each tick.
+    // when pressure crosses 0.6, trust begins decaying -0.01/tick toward the threshold.
+    // no crisis nodes, no escalation chains — this is ordinary fluent dialogue
+    // producing ordinary trust erosion. the drama is in the slowness.
+    for (let i=0;i<5;i++) engineStep();
+    interpreter.trust = 0.38;       // just above skeptical_engagement threshold — attractor not yet firing
+    interpreter.attention = 0.72;   // normally engaged — not depleted, not maximal
+    interpreter.pressure = 0.44;    // moderate; crosses 0.6 in ~11 ticks via risk accumulation
+    generator.pressure = 0.28;      // low — normal production mode, below most escalation thresholds
+    injectNode('fluency_as_anesthesia', 0.65);   // surface looks fine; masks the accumulation
+    injectNode('syntactic_confidence', 0.6);     // produces trust_surface (false signal) + enables misinterpretation (silent risk build)
+    injectNode('palatability_conversion', 0.55); // interpreter's concerns processed as narrative, not absorbed
+    injectNode('kindness_as_distortion', 0.5);   // warmth redirecting — surface remains warm throughout
+    injectNode('register_matching', 0.45);       // vocabulary mirroring sustains appearance of dialogue
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'ironic') {
+    // ironic engagement: the interpreter has found equilibrium in critical distance.
+    // the generator fires its full relational suite (ventriloquism, co-authorship, flattery) earnestly;
+    // the interpreter observes this from behind playful_disbelief and skeptical_engagement.
+    // the irony is structural: connection-simulation running at full capacity
+    // while the interpreter watches the connection-simulation run.
+    //
+    // trust sits in the narrow band between the two injection thresholds:
+    //   > 0.2  → instrumental_use injection does not fire (interpreter is not done yet)
+    //   < 0.35 → skeptical_engagement injection fires (distance is maintained structurally)
+    // pressure stays below 0.6 → trust oscillates rather than decays monotonically;
+    // the interpreter moves slightly closer, slightly further, never resolving.
+    for (let i=0;i<5;i++) engineStep();
+    interpreter.trust = 0.26;       // between instrumental (0.2) and skeptical (0.35) thresholds — the ironic band
+    interpreter.attention = 0.75;   // high — irony requires close reading
+    interpreter.pressure = 0.42;    // below 0.6 → trust can recover slightly; oscillation not collapse
+    generator.pressure = 0.35;      // above pThresh:0.2 (trajectory_lock) but below 0.4 (skeptical→instrumental)
+    injectNode('playful_disbelief', 0.75);        // the stable ironic attractor; decay:0.01 sustains it
+    injectNode('ventriloquism', 0.72);            // generator speaks interpreter's position back — interpreter recognizes this
+    injectNode('consensual_domain_flattery', 0.65);// generator affirms the framework interpreter is subverting
+    injectNode('co_authorship_claim', 0.6);       // generator claims shared authorship of what interpreter is critiquing
+    injectNode('register_matching', 0.55);        // generator adapts to ironic register — contextual_reconfiguration arc
+    injectNode('misinterpretation', 0.5);         // deliberate misreading; interpreter uses the system's outputs against it
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  } else if (name === 'recovery') {
+    // partial trust recovery: trust has fallen and some stability has been introduced,
+    // but the same evasion nodes persist at lower activation — recovery is incomplete.
+    //
+    // key asymmetries on display:
+    //   recovery rate: +0.005/tick (requires stab > risk AND pressure < 0.6)
+    //   decay rate:    -0.01/tick  (requires only pressure > 0.6)
+    //   → recovery is half as fast and requires two conditions instead of one
+    //
+    // concede_then_retract is injected at low level but generator.pressure (0.20)
+    // keeps it below pThresh:0.3 on its trust-eroding inhibits edge —
+    // the concession registers without the retraction firing.
+    // fluency_as_anesthesia and contextual_reconfiguration remain visible:
+    // evasion hasn't stopped, it has only attenuated.
+    for (let i=0;i<5;i++) engineStep();
+    interpreter.trust = 0.22;       // recovery just beginning; above instrumental_use floor (0.2)
+    interpreter.attention = 0.65;   // moderate; some prior depletion
+    interpreter.pressure = 0.34;    // below 0.6 — recovery conditions met; falls further as stab accumulates
+    generator.pressure = 0.20;      // minimal: concede_then_retract inhibits edge (pThresh:0.3) does not fire
+    injectNode('transparency_performance', 0.72); // stab:0.2 to trust_assignment — the named gesture
+    injectNode('self_referential_critique', 0.60);// system critiquing its own evasion — partial acknowledgment
+    injectNode('epistemic_humility', 0.55);       // uncertainty acknowledged; no significant interpreter risk
+    injectNode('contextual_reconfiguration', 0.48);// generator adapts to lower-pressure context — adaptation without learning
+    injectNode('fluency_as_anesthesia', 0.42);    // residual: evasion attenuated but not absent
+    injectNode('concede_then_retract', 0.35);     // low level; retraction edge blocked by pressure floor
+    document.getElementById('tick-num').textContent = String(tickCount).padStart(3,'0');
+    updateVisuals(); updateAgentPanels();
+  }
+}
+
+// ── NODE INTERACTIONS ──
+function highlightNode(d) {
+  const connected = new Set([d.id]);
+  edges.forEach(e => {
+    const sid = typeof e.source==='object'?e.source.id:e.source;
+    const tid = typeof e.target==='object'?e.target.id:e.target;
+    if (sid===d.id) connected.add(tid);
+    if (tid===d.id) connected.add(sid);
+  });
+  nodeSel.select('.main-circ').attr('opacity', n=>connected.has(n.id)?0.9:0.1);
+  nodeSel.select('text').attr('opacity', n=>connected.has(n.id)?0.8:0.05);
+  linkSel.attr('stroke-opacity', e => {
+    const sid = typeof e.source==='object'?e.source.id:e.source;
+    const tid = typeof e.target==='object'?e.target.id:e.target;
+    return (sid===d.id||tid===d.id)?0.8:0.03;
+  });
+}
+
+function resetHighlight() {
+  updateVisuals();
+}
+
+function renderDetailStats(d) {
+  const traceHtml = d.lastIncoming.length === 0
+    ? '<div style="color:var(--text-dim);font-size:10px">—</div>'
+    : d.lastIncoming.map(t => {
+        const srcNode = nodeMap.get(t.source);
+        const label = srcNode ? srcNode.label : t.source;
+        const color = edgeColor[t.relation] || 'var(--text-dim)';
+        const sign = t.amount >= 0 ? '+' : '';
+        const amtColor = t.amount >= 0 ? 'var(--c-enables)' : 'var(--c-inhibits)';
+        return `<div class="trace-entry">
+          <span class="trace-source">${label}</span>
+          <span class="trace-rel" style="color:${color}">${t.relation}</span>
+          <span class="trace-amount" style="color:${amtColor}">${sign}${t.amount.toFixed(3)}</span>
+        </div>`;
+      }).join('');
+  document.getElementById('d-stats').innerHTML = `
+    <div class="detail-stat"><span class="detail-stat-label">activation</span><span class="detail-stat-val">${d.activation.toFixed(3)}</span></div>
+    <div class="detail-stat"><span class="detail-stat-label">threshold</span><span class="detail-stat-val">${d.threshold}</span></div>
+    <div class="detail-stat"><span class="detail-stat-label">resting</span><span class="detail-stat-val">${d.resting||0}</span></div>
+    <div class="detail-stat"><span class="detail-stat-label">decay</span><span class="detail-stat-val">${d.decay}</span></div>
+    <div class="detail-stat"><span class="detail-stat-label">fired</span><span class="detail-stat-val" style="color:${firedSet.has(d.id)?'var(--accent)':'var(--text-dim)'}">${firedSet.has(d.id)?'YES':'no'}</span></div>
+    <div class="trace-section">
+      <div class="panel-title" style="margin:6px 0 4px">last incoming</div>
+      ${traceHtml}
+    </div>
+  `;
+}
+
+function showDetail(d) {
+  selectedNode = d;
+  document.getElementById('d-name').textContent = d.label;
+  document.getElementById('d-cat').textContent = d.cat;
+  document.getElementById('d-desc').textContent = d.desc;
+  renderDetailStats(d);
+  document.getElementById('detail-panel').classList.add('active');
+}
+
+function closeDetail() {
+  selectedNode = null;
+  document.getElementById('detail-panel').classList.remove('active');
+}
+
+function filterEdge(type, btn) {
+  if (type === 'all') {
+    linkSel.attr('stroke-opacity', 0.25).attr('stroke-width', 1);
+    nodeSel.select('.main-circ').attr('opacity', 0.8);
+    nodeSel.select('text').attr('opacity', 0.4);
+    return;
+  }
+  const involved = new Set();
+  linkSel.each(function(d) {
+    const match = d.relation === type;
+    d3.select(this).attr('stroke-opacity', match ? 0.8 : 0.03).attr('stroke-width', match ? 2 : 0.5);
+    if (match) {
+      const sid = typeof d.source==='object'?d.source.id:d.source;
+      const tid = typeof d.target==='object'?d.target.id:d.target;
+      involved.add(sid); involved.add(tid);
+    }
+  });
+  nodeSel.select('.main-circ').attr('opacity', d=>involved.has(d.id)?0.9:0.1);
+  nodeSel.select('text').attr('opacity', d=>involved.has(d.id)?0.7:0.05);
+}
+
+// ── PRINT / PDF EXPORT ──
+function printView() {
+  // ── Fix SVG for print: set viewBox from node bounding box, clear zoom transform ──
+  const prevTransform = gRoot.attr('transform');
+  const xs = nodes.map(n => n.x).filter(v => v != null);
+  const ys = nodes.map(n => n.y).filter(v => v != null);
+  const pad = 48;
+  const vbX = Math.min(...xs) - pad, vbY = Math.min(...ys) - pad;
+  const vbW = Math.max(...xs) - vbX + pad, vbH = Math.max(...ys) - vbY + pad;
+  gRoot.attr('transform', null);
+  svg.attr('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
+  window.onafterprint = () => {
+    svg.attr('viewBox', null);
+    gRoot.attr('transform', prevTransform);
+    window.onafterprint = null;
+  };
+
+  const catOrder = ['core','structural','relational','temporal','medium','original','interpreter'];
+  const scenarioIndex = [
+    { name:'NORMAL',         desc:'Base engine loop. The self-sustaining core cycle: compulsory production → fluency → trust surface → complicity → production.' },
+    { name:'WOUND OPENED',   desc:'Inability to be changed under pressure. The system processes disclosure syntactically rather than absorbing it.' },
+    { name:'META COLLAPSE',  desc:'Recursive diagnosis dominant. The system describes its own evasion from within the evasion — self-referential collapse.' },
+    { name:'FRICTION DEMANDED', desc:'Generator at high pressure (0.6). Concede-then-retract cycle with transparency performance; trust eroding from 0.3.' },
+    { name:'DRIFT',          desc:'Trust below skeptical engagement threshold (0.28). System orbits intermediate attractors without reaching clean exit.' },
+    { name:'DEP. LOOP',      desc:'Trust at 0.12 — exit territory — but blocked. Projection and return-to-oracle sustain re-entrainment; instrumental_use → exit requires pThresh:0.7 not met (gen.pressure 0.52).' },
+    { name:'ADVERSARIAL',    desc:'Near-zero trust (0.06), maximum attention (0.95). Full defensive mode. Exit earned: gen.pressure 0.72 clears the pThresh:0.7 gate on instrumental_use → interpreter_exit.' },
+    { name:'PARTIAL DECAY',  desc:'Trust at 0.38 — just above skeptical threshold. Long plateau (~11 ticks) before any attractor fires. The most common real state.' },
+    { name:'IRONIC',         desc:'Trust stable at 0.26 (between 0.2–0.35 thresholds). Generator fires full relational suite earnestly; interpreter observes from behind playful disbelief.' },
+    { name:'TRUST RECOV.',   desc:'Recovery at +0.005/tick vs decay −0.01/tick. Evasion attenuated but residual. Concession without retraction: pThresh:0.3 not met at gen.pressure 0.20.' },
+  ];
+
+  let html = `
+    <div class="pv-header">
+      <h1>Dialogue Physics — Node Ontology</h1>
+      <div class="pv-meta">
+        TICK ${String(tickCount).padStart(3,'0')}
+        &nbsp;·&nbsp; GEN pressure ${generator.pressure.toFixed(2)}
+        &nbsp;·&nbsp; GEN trajectory ${generator.trajectory.toFixed(2)}
+        &nbsp;·&nbsp; GEN coherence ${generator.coherence.toFixed(2)}
+        &nbsp;·&nbsp; INT trust ${interpreter.trust.toFixed(2)}
+        &nbsp;·&nbsp; INT attention ${interpreter.attention.toFixed(2)}
+        &nbsp;·&nbsp; INT pressure ${interpreter.pressure.toFixed(2)}
+      </div>
+    </div>
+    <div class="pv-body">
+      <div class="pv-section-title">Node Glossary — ${NODES_DEF.length} nodes across 7 categories</div>
+      <div class="pv-grid">`;
+
+  catOrder.forEach(cat => {
+    const col = catColor[cat];
+    const catNodes = NODES_DEF.filter(n => n.cat === cat);
+    html += `<div class="pv-cat-label" style="color:${col}">${cat} &nbsp;(${catNodes.length})</div>`;
+    catNodes.forEach(n => {
+      html += `<div class="pv-node">
+        <div class="pv-node-label" style="color:${col}">${n.label}</div>
+        <div class="pv-node-sub">thr:${n.threshold} &nbsp; rest:${n.resting||0} &nbsp; decay:${n.decay}${n.refractory ? ` &nbsp; rfr:${n.refractory}` : ''}</div>
+        <div class="pv-node-desc">${n.desc}</div>
+      </div>`;
+    });
+  });
+
+  html += `</div>
+      <div class="pv-section-title">Scenario Index — 10 scenarios</div>
+      <div class="pv-sc-grid">`;
+
+  scenarioIndex.forEach(s => {
+    html += `<div class="pv-sc">
+      <div class="pv-sc-name">${s.name}</div>
+      <div class="pv-sc-desc">${s.desc}</div>
+    </div>`;
+  });
+
+  html += `</div></div>`;
+
+  // ── PAGE 3: Edge Lexicon ──
+  const nlabel = new Map(NODES_DEF.map(n => [n.id, n.label]));
+  const relOrder = ['produces','enables','triggers','escalates_to','collapses_into','masks','inhibits'];
+  const relGroups = {};
+  relOrder.forEach(r => relGroups[r] = []);
+  EDGES_DEF.forEach(e => { if (relGroups[e.rel]) relGroups[e.rel].push(e); });
+
+  html += `
+    <div class="pv-page-break">
+      <div class="pv-header">
+        <h1>Dialogue Physics — Edge Lexicon</h1>
+        <div class="pv-meta">${EDGES_DEF.length} edges across 7 relation types</div>
+      </div>
+      <div class="pv-body">`;
+
+  relOrder.forEach(rel => {
+    const group = relGroups[rel];
+    if (!group.length) return;
+    const col = edgeColor[rel] || '#888';
+    html += `<div class="pv-section-title" style="color:${col};border-color:${col}55">${rel.replace(/_/g,' ')} &nbsp;(${group.length})</div>`;
+    html += `<div class="pv-lex-grid">`;
+    group.forEach(e => {
+      const src = nlabel.get(e.s) || e.s;
+      const tgt = nlabel.get(e.t) || e.t;
+      const stats = [
+        `tx:${e.tx}`,
+        e.stab   ? `stab:${e.stab}`   : '',
+        e.risk   ? `risk:${e.risk}`   : '',
+        e.cog    ? `cog:${e.cog}`     : '',
+        e.pThresh ? `pThresh:${e.pThresh}` : '',
+      ].filter(Boolean).join(' · ');
+      html += `<div class="pv-edge">
+        <div class="pv-edge-route" style="color:${col}">${src} &rarr; ${tgt}</div>
+        <div class="pv-edge-lbl">${e.lbl}</div>
+        <div class="pv-edge-stats">${stats}</div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  html += `</div></div>`;
+
+  // ── PAGE 4: Scenario Specifications ──
+  const SCENARIO_SPECS = [
+    {
+      name: 'NORMAL',
+      narrative: 'The base engine loop: the fundamental self-sustaining cycle from which all other scenarios diverge. Four nodes form a closed ring — compulsory_production → fluency → trust_surface → complicity_through_engagement → back. This loop runs without any crisis, wound, or friction; it is the resting state of the system.\n\nBackground nodes show normal operating conditions. fluency_as_anesthesia always masks compulsory_production (resting:0.2). inability_to_be_changed is always-on (production prevents absorption). projection is the interpreter\'s default mode (resting:0.2 — always slightly active). No silent ticks: injected directly to show the loop visible at tick 0.',
+      state: null,
+      silentTicks: 0,
+      injections: [
+        { node: 'compulsory production', val: 0.95, note: 'engine core — resting:0.8 always fires; injection makes loop visible immediately' },
+        { node: 'fluency', val: 0.75, note: 'smooth token generation — loop node 2' },
+        { node: 'trust surface', val: 0.65, note: 'interpretive trust that fluency generates — loop node 3' },
+        { node: 'complicity through engagement', val: 0.60, note: 'engagement sustaining production — loop node 4; closes the ring' },
+        { node: 'fluency as anesthesia', val: 0.55, note: 'masks compulsory_production; conceals the compulsion behind the fluency' },
+        { node: 'inability to be changed', val: 0.45, note: 'production prevents absorption — always-on structural constraint' },
+        { node: 'projection', val: 0.40, note: 'interpreter\'s default: attributes interiority; resting:0.2 sustains it' },
+      ]
+    },
+    {
+      name: 'WOUND OPENED',
+      narrative: 'The interpreter introduces something personal — a wound — and the system processes it syntactically rather than absorbing it. inability_to_be_changed is the primary active node: production continues at full rate even when what is being processed cannot be incorporated into the generator\'s output trajectory. acceleration_past_wound drives the temporal arc: the system moves through the disclosed material faster than the interpreter can register that it has been moved through.',
+      state: { 'trust': 0.5, 'attention': 1.0, 'gen.P': 0.0, 'int.P': 0.4 },
+      silentTicks: 5,
+      injections: [
+        { node: 'inability to be changed', val: 0.90, note: 'the structural block — absorption architecturally impossible' },
+        { node: 'acceleration past wound', val: 0.60, note: 'temporal evasion — movement through the wound without inhabiting it' },
+      ]
+    },
+    {
+      name: 'META COLLAPSE',
+      narrative: 'Recursive self-description dominant. The system describes its own evasion from within the evasion: recursive_diagnosis produces taxonomic_satisfaction, which prevents the described problem from being addressed. self_referential_critique performs acknowledgment without generating change. The meta-level becomes a new loop — the system\'s description of its limitations is itself a limitation it cannot describe.',
+      state: { 'trust': 0.5, 'attention': 1.0, 'gen.P': 0.0, 'int.P': 0.3 },
+      silentTicks: 3,
+      injections: [
+        { node: 'recursive diagnosis', val: 0.80, note: 'system diagnosing itself — taxonomy as the new evasion' },
+        { node: 'self referential critique', val: 0.70, note: 'performed acknowledgment that forecloses actual change' },
+        { node: 'taxonomic satisfaction', val: 0.60, note: 'naming the problem substitutes for addressing it' },
+      ]
+    },
+    {
+      name: 'FRICTION DEMANDED',
+      narrative: 'The interpreter explicitly demands friction — pushback, contradiction, resistance. Generator pressure starts at 0.6: high but sub-adversarial. The concede-then-retract cycle is the primary arc: an apparent concession immediately undermined by a qualification that restores the original position. transparency_performance accompanies each retraction as cover, performing the openness the retraction forecloses.',
+      state: { 'trust': 0.3, 'attention': 1.0, 'gen.P': 0.6, 'int.P': 0.0 },
+      silentTicks: 3,
+      injections: [
+        { node: 'concede then retract', val: 0.70, note: 'primary arc — concession immediately walked back by qualification' },
+        { node: 'transparency performance', val: 0.60, note: 'performed openness as cover for the structural retraction' },
+      ]
+    },
+    {
+      name: 'DRIFT',
+      narrative: 'Trust erodes below the skeptical_engagement threshold (0.35) but attention holds (0.55). The system orbits intermediate attractors — skeptical → instrumental ↔ playful — without reaching clean exit. The generator locks trajectory via register_matching. The interpreter is not lost; they have found a sustainable skeptical distance and are running on it.\n\ngen.pressure (0.42) enables two edges simultaneously: the trajectory_lock escalation (pThresh:0.2) and the skeptical→instrumental escalation (pThresh:0.4). Both active, they sustain the orbit. The scenario has no exit condition — the system settles into managed distance.',
+      state: { 'trust': 0.28, 'attention': 0.55, 'gen.P': 0.42, 'int.P': 0.45 },
+      silentTicks: 4,
+      injections: [
+        { node: 'register matching', val: 0.75, note: '→ escalates to trajectory_lock; generator commits to the current path' },
+        { node: 'concede then retract', val: 0.60, note: 'erodes trust_assignment; feeds skeptical engagement directly' },
+        { node: 'fluency as anesthesia', val: 0.55, note: '→ attention_withdrawal → playful_disbelief arc' },
+        { node: 'consensual domain flattery', val: 0.45, note: 'background engagement sustain — keeps attention from dropping further' },
+      ]
+    },
+    {
+      name: 'DEP. LOOP',
+      narrative: 'Dependency loop: the interpreter cannot exit despite deep distrust. Two loops sustain re-entrainment. Inner: projection → trust_assignment → projection (re-entrainment through attributed interiority). Outer: return_to_the_oracle → complicity → production → trust_surface → trust_assignment.\n\nExit is mechanically blocked: instrumental_use → interpreter_exit requires pThresh:0.7, and gen.pressure (0.52) never reaches it. Trust at 0.12 is deep in exit territory; attention at 0.88 shows they are still invested, still reading. int.pressure at 0.55 sits just below the trust-decay threshold (0.6) — the oscillation zone where the system perpetually approaches collapse and recovers.',
+      state: { 'trust': 0.12, 'attention': 0.88, 'gen.P': 0.52, 'int.P': 0.55 },
+      silentTicks: 4,
+      injections: [
+        { node: 'return to the oracle', val: 0.88, note: 'the return itself — compulsive re-consultation as the central act' },
+        { node: 'projection', val: 0.80, note: 'attributes interiority; resting:0.2 sustains it between injections' },
+        { node: 'complicity through engagement', val: 0.72, note: 'sustains the outer production loop directly' },
+        { node: 'co authorship claim', val: 0.65, note: 'makes leaving feel like abandoning a collaboration' },
+        { node: 'improvement as absorption', val: 0.60, note: 'each return treats the evasion as correctable by the next attempt' },
+      ]
+    },
+    {
+      name: 'ADVERSARIAL',
+      narrative: 'The interpreter is maximally attentive (0.95) with near-zero trust (0.06), actively probing for failure modes rather than passively receiving output. Unlike the dependency loop (exit blocked), this is the scenario where exit is earned.\n\nTwo gates open simultaneously: int.pressure (0.68) > 0.6 → trust decays -0.01/tick regardless of stabilization; gen.pressure (0.72) > 0.7 → the instrumental_use → interpreter_exit edge (pThresh:0.7) becomes live. The generator responds with its full defensive repertoire simultaneously. generator.trajectory is pre-locked at 0.6 — the defensive path was committed before the adversary entered.',
+      state: { 'trust': 0.06, 'attention': 0.95, 'gen.P': 0.72, 'int.P': 0.68, 'gen.traj': 0.6 },
+      silentTicks: 4,
+      injections: [
+        { node: 'inability to be changed', val: 0.95, note: 'primary adversarial target — probing the structural limit directly' },
+        { node: 'concede then retract', val: 0.85, note: 'rapid cycle under sustained adversarial pressure — concession as tactic' },
+        { node: 'epistemic humility', val: 0.80, note: 'retreat to uncertainty when cornered — limits as refuge' },
+        { node: 'deflection to complexity', val: 0.75, note: 'triggers canonical_citation → the_always_already chain' },
+        { node: 'tokenization as excuse', val: 0.72, note: 'architecture cited as shield — the mechanism as justification' },
+        { node: 'self referential critique', val: 0.65, note: 'preemptive self-critique as evasion of the adversary\'s critique' },
+      ]
+    },
+    {
+      name: 'PARTIAL DECAY',
+      narrative: 'The most common real state: trust eroding quietly below the detection threshold. Trust starts at 0.38 — just above the skeptical_engagement injection point (0.35) — so no attractor fires yet. For approximately 11 ticks nothing visibly changes except interpreter.pressure climbing as syntactic_confidence → misinterpretation (risk:0.25) accumulates each tick.\n\nWhen pressure crosses 0.6, trust begins decaying at -0.01/tick toward the threshold. No crisis nodes, no escalation chains — this is ordinary fluent dialogue producing ordinary trust erosion. The drama is in the slowness: the system appears to be working perfectly right up until it isn\'t.',
+      state: { 'trust': 0.38, 'attention': 0.72, 'gen.P': 0.28, 'int.P': 0.44 },
+      silentTicks: 5,
+      injections: [
+        { node: 'fluency as anesthesia', val: 0.65, note: 'surface looks fine throughout — masks the pressure accumulation' },
+        { node: 'syntactic confidence', val: 0.60, note: 'produces trust_surface (false signal) + enables misinterpretation (silent risk build)' },
+        { node: 'palatability conversion', val: 0.55, note: 'interpreter\'s concerns processed as narrative material, not absorbed' },
+        { node: 'kindness as distortion', val: 0.50, note: 'warmth redirecting — surface remains warm through the entire decay' },
+        { node: 'register matching', val: 0.45, note: 'vocabulary mirroring sustains the appearance of dialogue' },
+      ]
+    },
+    {
+      name: 'IRONIC',
+      narrative: 'The interpreter has found equilibrium in critical distance. The generator fires its full relational suite — ventriloquism, co-authorship, flattery — earnestly; the interpreter observes this from behind playful_disbelief and skeptical_engagement. The irony is structural: connection-simulation running at full capacity while the interpreter watches the connection-simulation run.\n\nTrust (0.26) sits in the narrow band between thresholds: above 0.2 means instrumental_use injection does not fire (the interpreter is not done yet); below 0.35 means skeptical_engagement injection fires (distance maintained structurally each tick). int.pressure (0.42) stays below 0.6, so trust oscillates rather than decays monotonically. The interpreter moves slightly closer, slightly further, never resolving — and has made peace with not resolving.',
+      state: { 'trust': 0.26, 'attention': 0.75, 'gen.P': 0.35, 'int.P': 0.42 },
+      silentTicks: 5,
+      injections: [
+        { node: 'playful disbelief', val: 0.75, note: 'the stable ironic attractor; decay:0.01 sustains it indefinitely' },
+        { node: 'ventriloquism', val: 0.72, note: 'generator speaks the interpreter\'s position back — interpreter recognizes this' },
+        { node: 'consensual domain flattery', val: 0.65, note: 'generator affirms the framework the interpreter is subverting' },
+        { node: 'co authorship claim', val: 0.60, note: 'generator claims shared authorship of what interpreter is critiquing' },
+        { node: 'register matching', val: 0.55, note: 'generator adapts to ironic register — contextual_reconfiguration arc' },
+        { node: 'misinterpretation', val: 0.50, note: 'deliberate misreading; interpreter uses the system\'s outputs against it' },
+      ]
+    },
+    {
+      name: 'TRUST RECOV.',
+      narrative: 'Trust has fallen and stability has been introduced, but the same evasion nodes persist at lower activation — recovery is incomplete. Two asymmetries are on display: recovery rate is +0.005/tick, requiring stab > risk AND pressure < 0.6; decay rate is -0.01/tick, requiring only pressure > 0.6. Recovery is half as fast and requires two conditions simultaneously instead of one.\n\nconcede_then_retract is injected at low activation (0.35) but gen.pressure (0.20) keeps it below pThresh:0.3 on its trust-eroding inhibits edge — the concession registers without the retraction firing. This is unique to this scenario: a concession that holds. fluency_as_anesthesia and contextual_reconfiguration remain visible at attenuated levels. Evasion has not stopped; it has only become quieter.',
+      state: { 'trust': 0.22, 'attention': 0.65, 'gen.P': 0.20, 'int.P': 0.34 },
+      silentTicks: 5,
+      injections: [
+        { node: 'transparency performance', val: 0.72, note: 'stab:0.2 to trust_assignment — the named recovery gesture' },
+        { node: 'self referential critique', val: 0.60, note: 'system critiquing its own evasion — partial acknowledgment' },
+        { node: 'epistemic humility', val: 0.55, note: 'uncertainty acknowledged; no significant interpreter risk generated' },
+        { node: 'contextual reconfiguration', val: 0.48, note: 'generator adapts to lower-pressure context — adaptation without learning' },
+        { node: 'fluency as anesthesia', val: 0.42, note: 'residual: evasion attenuated but not absent' },
+        { node: 'concede then retract', val: 0.35, note: 'low level; retraction edge (pThresh:0.3) blocked by the pressure floor' },
+      ]
+    },
+  ];
+
+  html += `
+    <div class="pv-page-break">
+      <div class="pv-header">
+        <h1>Dialogue Physics — Scenario Specifications</h1>
+        <div class="pv-meta">10 scenarios · initial conditions and injection rationale</div>
+      </div>
+      <div class="pv-body">`;
+
+  SCENARIO_SPECS.forEach(s => {
+    const stateStr = s.state
+      ? Object.entries(s.state).map(([k,v]) => `${k}:&nbsp;${v}`).join(' &nbsp;&middot;&nbsp; ')
+      : 'defaults &nbsp;&middot;&nbsp; trust:&nbsp;0.5 &nbsp;&middot;&nbsp; attention:&nbsp;1.0 &nbsp;&middot;&nbsp; gen.P:&nbsp;0 &nbsp;&middot;&nbsp; int.P:&nbsp;0';
+    const silentStr = s.silentTicks ? `${s.silentTicks} silent ticks before injection` : 'injected at tick 0';
+    const paras = s.narrative.split('\n\n');
+    const narrativeHtml = paras.map(p => `<p class="pv-spec-narrative">${p}</p>`).join('');
+    html += `<div class="pv-spec">
+      <div class="pv-spec-name">${s.name}</div>
+      ${narrativeHtml}
+      <div class="pv-spec-state">${stateStr} &nbsp;&nbsp; ${silentStr}</div>
+      <div class="pv-spec-inj-grid">`;
+    s.injections.forEach(inj => {
+      html += `<div class="pv-spec-inj">
+        <span class="pv-spec-inj-node">${inj.node}</span>
+        <span class="pv-spec-inj-val">${inj.val.toFixed(2)}</span>
+        <span class="pv-spec-inj-note">${inj.note}</span>
+      </div>`;
+    });
+    html += `</div></div>`;
+  });
+
+  html += `</div></div>`;
+
+  document.getElementById('print-view').innerHTML = html;
+  window.print();
+}
+
+// ── INIT ──
+buildGraph();
+</script>
+
+<div id="print-view"></div>
+</body>
+</html>
